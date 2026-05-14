@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Pixel Studio Pro: Pygame Edition</title>
+    <style>
+        :root { --bg: #0d1117; --panel: #161b22; --accent: #58a6ff; --danger: #f85149; --text: #c9d1d9; }
+        body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        
+        /* Menu Superior de Navegação */
+        nav { background: #010409; display: flex; padding: 10px 20px; gap: 20px; border-bottom: 1px solid #30363d; }
+        .menu-item { padding: 8px 16px; cursor: pointer; border-radius: 6px; font-weight: bold; transition: 0.2s; border: 1px solid transparent; }
+        .menu-item:hover { background: #21262d; }
+        .menu-item.active { background: #21262d; border-color: var(--accent); color: var(--accent); }
+
+        /* Layout Principal */
+        .workspace { display: flex; flex: 1; overflow: hidden; }
+        
+        /* Painel Lateral de Ativos */
+        .assets-panel { width: 200px; background: #0d1117; border-right: 1px solid #30363d; padding: 15px; overflow-y: auto; }
+        .asset-slot { display: flex; align-items: center; gap: 10px; padding: 10px; background: var(--panel); border: 1px solid #30363d; margin-bottom: 8px; cursor: pointer; border-radius: 6px; }
+        .asset-slot.active { border-color: var(--accent); background: #1f242c; }
+        .asset-slot canvas { background: #000; border: 1px solid #444; width: 32px; height: 32px; image-rendering: pixelated; }
+
+        /* Área Central do Editor */
+        .editor-container { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 20px; background: #010409; overflow-y: auto; }
+        .canvas-card { background: var(--panel); padding: 20px; border-radius: 12px; border: 1px solid #30363d; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        canvas { background: #000; cursor: crosshair; image-rendering: pixelated; border: 1px solid #000; }
+
+        /* Toolbar e Paleta */
+        .toolbar { width: 300px; background: #0d1117; border-left: 1px solid #30363d; padding: 20px; display: flex; flex-direction: column; }
+        .palette { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 20px; }
+        .color-btn { height: 30px; border-radius: 4px; cursor: pointer; border: 1px solid #000; }
+        .color-btn.active { border: 2px solid #fff; transform: scale(1.1); }
+
+        /* Botões de Ação */
+        .btn { padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; margin-bottom: 10px; transition: 0.2s; }
+        .btn-primary { background: #238636; color: white; }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-copy { background: var(--accent); color: white; }
+        
+        textarea { flex: 1; background: #010409; color: #39d353; border: 1px solid #30363d; font-family: 'Consolas', monospace; font-size: 11px; padding: 10px; resize: none; border-radius: 6px; }
+        .preview-label { font-size: 10px; color: #8b949e; margin-bottom: 5px; text-transform: uppercase; }
+    </style>
+</head>
+<body>
+
+    <nav>
+        <div class="menu-item active" onclick="setMode('tiles')">🗺️ Cenário (Tiles)</div>
+        <div class="menu-item" onclick="setMode('sprites')">👾 Personagens (Sprites)</div>
+        <div class="menu-item" onclick="setMode('map')">🌍 Mapa Global</div>
+    </nav>
+
+    <div class="workspace">
+        <div class="assets-panel" id="assets-list">
+            <h4 id="panel-title">Blocos</h4>
+            <div id="slots-container"></div>
+        </div>
+
+        <div class="editor-container">
+            <div class="canvas-card">
+                <h3 id="editor-title" style="margin:0 0 15px 0; font-size: 14px;">Editor: Bloco A</h3>
+                <canvas id="mainCanvas" width="400" height="400"></canvas>
+                
+                <div id="anim-controls" style="display:none; margin-top:15px; gap:10px;">
+                    <button class="btn btn-primary" onclick="addFrame()">+ Novo Frame</button>
+                    <span id="frame-info" style="align-self: center;">Frame 1/1</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="toolbar">
+            <div class="preview-label">Paleta 8-Bit</div>
+            <div class="palette" id="palette"></div>
+
+            <div class="preview-label">Ações</div>
+            <button class="btn btn-danger" onclick="clearCurrent()">🧹 Limpar Bloco/Sprite</button>
+            <button class="btn btn-copy" onclick="copyCode()">📋 Copiar Código</button>
+
+            <div class="preview-label" style="margin-top:15px;">Código Pygame</div>
+            <textarea id="output" readonly></textarea>
+        </div>
+    </div>
+
+<script>
+    const mCanvas = document.getElementById('mainCanvas'), mCtx = mCanvas.getContext('2d');
+    let currentMode = 'tiles';
+    let activeId = 'A';
+    let activeFrame = 0;
+    let selectedColor = '#f8f9fa';
+    let isDrawing = false;
+
+    const colors = ['#000000','#1d2b53','#7e2553','#008751','#ab5236','#5f574f','#c2c3c7','#fff1e8','#ff004d','#ffa300','#ffec27','#00e436','#29adff','#83769c','#ff77a8','#ffccaa'];
+    
+    // Banco de Dados do Projeto
+    const project = {
+        tiles: { 'A': [newGrid(16)], 'B': [newGrid(16)], 'C': [newGrid(16)], '.': [newGrid(16)] },
+        sprites: { 'P1': [newGrid(16)], 'P2': [newGrid(16)] },
+        map: Array(20).fill().map(() => Array(20).fill('.'))
+    };
+
+    function newGrid(size) { return Array(size).fill().map(() => Array(size).fill(null)); }
+
+    function setMode(mode) {
+        currentMode = mode;
+        document.querySelectorAll('.menu-item').forEach(m => m.classList.toggle('active', m.innerText.toLowerCase().includes(mode)));
+        
+        if(mode === 'map') {
+            activeId = 'MAPA';
+            document.getElementById('assets-list').style.display = 'none';
+            document.getElementById('anim-controls').style.display = 'none';
+        } else {
+            document.getElementById('assets-list').style.display = 'block';
+            activeId = Object.keys(project[mode])[0];
+            document.getElementById('anim-controls').style.display = mode === 'sprites' ? 'flex' : 'none';
+            updateAssetList();
+        }
+        render();
+    }
+
+    function updateAssetList() {
+        const container = document.getElementById('slots-container');
+        container.innerHTML = '';
+        Object.keys(project[currentMode]).forEach(id => {
+            const div = document.createElement('div');
+            div.className = `asset-slot ${activeId === id ? 'active' : ''}`;
+            div.innerHTML = `<canvas id="prev-${id}" width="16" height="16"></canvas> <span>${id}</span>`;
+            div.onclick = () => { activeId = id; activeFrame = 0; updateAssetList(); render(); };
+            container.appendChild(div);
+            drawToCanvas(project[currentMode][id][0], document.getElementById(`prev-${id}`));
+        });
+    }
+
+    function drawToCanvas(data, canvas) {
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0,0,16,16);
+        data.forEach((row, y) => row.forEach((col, x) => {
+            if(col) { ctx.fillStyle = col; ctx.fillRect(x, y, 1, 1); }
+        }));
+    }
+
+    function render() {
+        mCtx.clearRect(0,0,400,400);
+        document.getElementById('editor-title').innerText = `Editor: ${activeId}`;
+
+        if(currentMode === 'map') {
+            const step = 400 / 20;
+            project.map.forEach((row, y) => row.forEach((char, x) => {
+                const tileData = project.tiles[char][0];
+                tileData.forEach((tr, ty) => tr.forEach((tc, tx) => {
+                    if(tc) { mCtx.fillStyle = tc; mCtx.fillRect(x*step + tx*(step/16), y*step + ty*(step/16), step/16, step/16); }
+                }));
+                mCtx.strokeStyle = '#333'; mCtx.strokeRect(x*step, y*step, step, step);
+            }));
+        } else {
+            const step = 400 / 16;
+            const currentData = project[currentMode][activeId][activeFrame];
+            currentData.forEach((row, y) => row.forEach((col, x) => {
+                mCtx.fillStyle = col || '#000';
+                mCtx.fillRect(x*step, y*step, step, step);
+                mCtx.strokeStyle = '#222'; mCtx.strokeRect(x*step, y*step, step, step);
+            }));
+            document.getElementById('frame-info').innerText = `Frame ${activeFrame + 1}/${project[currentMode][activeId].length}`;
+        }
+        updateOutput();
+    }
+
+    function handleInput(e) {
+        const rect = mCanvas.getBoundingClientRect();
+        const x = Math.floor((e.clientX - rect.left) / (400 / (currentMode === 'map' ? 20 : 16)));
+        const y = Math.floor((e.clientY - rect.top) / (400 / (currentMode === 'map' ? 20 : 16)));
+
+        if(currentMode === 'map') {
+            // No modo mapa, pintamos com o Tile que estava selecionado antes
+            project.map[y][x] = prompt("Digite a letra do Tile (A, B, C ou .):") || '.';
+        } else {
+            project[currentMode][activeId][activeFrame][y][x] = selectedColor;
+        }
+        render();
+        if(currentMode !== 'map') updateAssetList();
+    }
+
+    // Eventos
+    mCanvas.onmousedown = (e) => { isDrawing = true; handleInput(e); };
+    window.onmousemove = (e) => { if(isDrawing && currentMode !== 'map') handleInput(e); };
+    window.onmouseup = () => isDrawing = false;
+
+    function clearCurrent() {
+        if(!confirm("Deseja limpar este item?")) return;
+        if(currentMode === 'map') project.map = Array(20).fill().map(() => Array(20).fill('.'));
+        else project[currentMode][activeId][activeFrame] = newGrid(16);
+        render();
+        updateAssetList();
+    }
+
+    function addFrame() {
+        project.sprites[activeId].push(newGrid(16));
+        activeFrame = project.sprites[activeId].length - 1;
+        render();
+    }
+
+    function updateOutput() {
+        let text = `# MAPA DO JOGO\n`;
+        text += project.map.map(r => r.join('')).join('\n');
+        document.getElementById('output').value = text;
+    }
+
+    function copyCode() {
+        document.getElementById('output').select();
+        document.execCommand('copy');
+        alert("Código copiado!");
+    }
+
+    // Gerar Paleta
+    colors.forEach(c => {
+        const b = document.createElement('div');
+        b.className = 'color-btn'; b.style.background = c;
+        b.onclick = () => {
+            selectedColor = c;
+            document.querySelectorAll('.color-btn').forEach(btn => btn.classList.remove('active'));
+            b.classList.add('active');
+        };
+        document.getElementById('palette').appendChild(b);
+    });
+
+    setMode('tiles');
+</script>
+</body>
+</html>
